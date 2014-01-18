@@ -26,9 +26,14 @@
 #include <boost/filesystem/fstream.hpp>
 
 #include <hiredis.h>
+#include "rpcrawtransaction.cpp"
+#include "json/json_spirit_writer.h"
+#include "json/json_spirit_value.h"
+#include "json/json_spirit.h"
 
 using namespace std;
 using namespace boost;
+using namespace json_spirit;
 
 #if defined(NDEBUG)
 # error "Bitcoin cannot be compiled without assertions."
@@ -252,14 +257,19 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
     //             }
     //         }
     //     }
+    if(pindex) {
         CBlock bNew; 
         if (ReadBlockFromDisk(bNew, pindex)) {
             BOOST_FOREACH(const CTransaction &tx, bNew.vtx) {
                 //store transaction
                 // in rpcrawtransaction.cpp
-                Object result;
-                TxToJSON(tx, bNew->hashBlock, result)
-                transactionGraph.Command("SET %s %s",tx.GetHash().ToString(), result.ToString());
+                // Object result;
+                // TxToJSON(tx, bNew.GetHash(), result);
+                string txString = tx.ToString();
+                string cmd = "SET "+tx.GetHash().ToString()
+                                    + " " + txString;
+                redisReply *reply = transactionGraph.Command(cmd.c_str());
+                freeReplyObject(reply);
 
                 // for every transactions that are input to the
                 // transaction, add output field for the txid of the

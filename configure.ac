@@ -569,6 +569,8 @@ if test x$bitcoin_enable_qt != xno; then
   fi
 fi
 
+LIBS="$LIBS -lhiredis"
+
 if test x$use_tests = xyes; then
   BUILD_TEST="test"
 fi

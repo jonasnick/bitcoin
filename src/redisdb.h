@@ -29,7 +29,6 @@ public:
     }
 
     redisReply *Command(const char *format, ...) {
-        // return (redisReply*)redisCommand(c,format);
-        return NULL;
+        return (redisReply*)redisCommand(c,format);
     }
 };
