@@ -12,6 +12,7 @@
 #include "checkqueue.h"
 #include "init.h"
 #include "net.h"
+#include "redisdb.h"
 #include "txdb.h"
 #include "txmempool.h"
 #include "ui_interface.h"
@@ -24,6 +25,8 @@
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
 
+#include <hiredis.h>
+
 using namespace std;
 using namespace boost;
 
@@ -34,6 +37,8 @@ using namespace boost;
 //
 // Global state
 //
+
+ExternalKeyValueDB transactionGraph;
 
 CCriticalSection cs_main;
 
@@ -226,21 +231,74 @@ void UnregisterNodeSignals(CNodeSignals& nodeSignals)
     nodeSignals.FinalizeNode.disconnect(&FinalizeNode);
 }
 
+// Update chain in external database
+bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
+    if(!transactionGraph.IsSetup()) {
+        transactionGraph.ConnectTo("localhost",6379);
+    }
+    if(!transactionGraph.IsSetup()) {
+        return false;
+    }
+
+    // while (pindex && db.get["blockAtHeight:"+pindex->nHeight] !=  pindex->phashBlock) {
+    //     if (db.get["blockAtHeight:"+pindex->nHeight] != NULL) {
+    //         // if there is something to remove, 
+    //         // i.e.its not just a new block on top of the chain
+    //         CBlock bOld;
+    //         if (ReadBlockFromDisk(bOld, 
+    //             mapBlockIndex.find(db.get["blockAtHeight:"+pindex->nHeight]))) {
+    //             BOOST_FOREACH(const CTransaction &tx, block.vtx) {
+    //                 //remove transactions
+    //             }
+    //         }
+    //     }
+        CBlock bNew; 
+        if (ReadBlockFromDisk(bNew, pindex)) {
+            BOOST_FOREACH(const CTransaction &tx, bNew.vtx) {
+                //store transaction
+                // in rpcrawtransaction.cpp
+                Object result;
+                TxToJSON(tx, bNew->hashBlock, result)
+                transactionGraph.Command("SET %s %s",tx.GetHash().ToString(), result.ToString());
+
+                // for every transactions that are input to the
+                // transaction, add output field for the txid of the
+                // new transaction
+                // ... 
+                // attention: these input transactions might not yet be stored
+                // in the database!
+                
+                // for every output address in the transaction add new db-entry
+                // outputAddress -> txid
+
+            }
+        }
+    }
+    return true;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 //
 // CChain implementation
 //
 
+// Fills the whole activeChain with CBlockIndexes at startup
+// and keeps the activeChain up-to-date
 CBlockIndex *CChain::SetTip(CBlockIndex *pindex) {
     if (pindex == NULL) {
         vChain.clear();
         return NULL;
     }
+
     vChain.resize(pindex->nHeight + 1);
     while (pindex && vChain[pindex->nHeight] != pindex) {
+        //LogPrintf("Set blockchain tip to block at height %i\n", pindex->nHeight);
         vChain[pindex->nHeight] = pindex;
         pindex = pindex->pprev;
     }
+
+    updateExternalTransactionDatabase(pindex);
+
     return pindex;
 }
 
