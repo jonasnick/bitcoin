@@ -29,6 +29,11 @@ public:
     }
 
     redisReply *Command(const char *format, ...) {
-        return (redisReply*)redisCommand(c,format);
+        redisReply *ret;
+        va_list args;
+        va_start(args,format);
+        ret = (redisReply *)redisvCommand(c,format,args);
+        va_end(args);
+        return ret;
     }
 };

@@ -27,9 +27,7 @@
 
 #include <hiredis.h>
 #include "rpcrawtransaction.cpp"
-#include "json/json_spirit_writer.h"
-#include "json/json_spirit_value.h"
-#include "json/json_spirit.h"
+#include "json/json_spirit_writer_template.h"
 
 using namespace std;
 using namespace boost;
@@ -245,44 +243,60 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
         return false;
     }
 
-    // while (pindex && db.get["blockAtHeight:"+pindex->nHeight] !=  pindex->phashBlock) {
-    //     if (db.get["blockAtHeight:"+pindex->nHeight] != NULL) {
-    //         // if there is something to remove, 
-    //         // i.e.its not just a new block on top of the chain
-    //         CBlock bOld;
-    //         if (ReadBlockFromDisk(bOld, 
-    //             mapBlockIndex.find(db.get["blockAtHeight:"+pindex->nHeight]))) {
-    //             BOOST_FOREACH(const CTransaction &tx, block.vtx) {
-    //                 //remove transactions
-    //             }
-    //         }
-    //     }
-    if(pindex) {
+    while (pindex) {
+        redisReply* dbGetBlockReply = transactionGraph.Command("GET blockAtHeight:%i",pindex->nHeight);
+
+
+        //there is nothing to do block is already recorded in the db
+        if (dbGetBlockReply->type!=REDIS_REPLY_NIL 
+               && strcmp(dbGetBlockReply->str, 
+                   pindex->phashBlock->ToString().c_str()) == 0) {
+        
+            freeReplyObject(dbGetBlockReply);
+            break;
+        }
+
+        //remove old transactions if necessary
+
+
+        //add block to the database
         CBlock bNew; 
         if (ReadBlockFromDisk(bNew, pindex)) {
-            BOOST_FOREACH(const CTransaction &tx, bNew.vtx) {
-                //store transaction
-                // in rpcrawtransaction.cpp
-                // Object result;
-                // TxToJSON(tx, bNew.GetHash(), result);
-                string txString = tx.ToString();
-                string cmd = "SET "+tx.GetHash().ToString()
-                                    + " " + txString;
-                redisReply *reply = transactionGraph.Command(cmd.c_str());
-                freeReplyObject(reply);
 
-                // for every transactions that are input to the
-                // transaction, add output field for the txid of the
+            //set block at height
+            redisReply *setBlockReply = 
+                transactionGraph.Command("SET blockAtHeight:%i %s",pindex->nHeight,pindex->phashBlock->ToString().c_str());
+            freeReplyObject(setBlockReply);
+
+            //add transactions
+            BOOST_FOREACH(const CTransaction &tx, bNew.vtx) {
+
+                json_spirit::Object result;
+                TxToJSON(tx, *(pindex->phashBlock), result);
+                string txString = 
+                    json_spirit::write_string(Value(result),false);
+
+                redisReply *setTxReply = 
+                    transactionGraph.Command("SET tx:%s '%s'",tx.GetHash().ToString().c_str(), txString.c_str());
+                // printf("GET foo: %s\n", setTxReply->str);
+                freeReplyObject(setTxReply);
+
+                // for every transactions t_i that is input to the
+                // transaction, add member to set
+                // output:t_i -> txid for the txid of the
                 // new transaction
                 // ... 
                 // attention: these input transactions might not yet be stored
                 // in the database!
                 
                 // for every output address in the transaction add new db-entry
-                // outputAddress -> txid
+                // txUse:outputAddress -> txid
 
             }
         }
+
+        freeReplyObject(dbGetBlockReply);
+        pindex = pindex->pprev;
     }
     return true;
 }
@@ -300,14 +314,16 @@ CBlockIndex *CChain::SetTip(CBlockIndex *pindex) {
         return NULL;
     }
 
+    CBlockIndex *pindexCopy = pindex;
+
     vChain.resize(pindex->nHeight + 1);
     while (pindex && vChain[pindex->nHeight] != pindex) {
-        //LogPrintf("Set blockchain tip to block at height %i\n", pindex->nHeight);
+        // printf("Set blockchain tip to block at height %i\n", pindex->nHeight);
         vChain[pindex->nHeight] = pindex;
         pindex = pindex->pprev;
     }
 
-    updateExternalTransactionDatabase(pindex);
+    updateExternalTransactionDatabase(pindexCopy);
 
     return pindex;
 }

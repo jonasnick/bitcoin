@@ -176,3 +176,18 @@ void customDB::SetTip(CBlockIndex *pindex) {
     }
 
 }
+
+
+// db.get["blockAtHeight:"+pindex->nHeight] !=  pindex->phashBlock) {
+    //     if (db.get["blockAtHeight:"+pindex->nHeight] != NULL) {
+    //         // if there is something to remove, 
+    //         // i.e.its not just a new block on top of the chain
+    //         CBlock bOld;
+    //         if (ReadBlockFromDisk(bOld, 
+    //             mapBlockIndex.find(db.get["blockAtHeight:"+pindex->nHeight]))) {
+    //             BOOST_FOREACH(const CTransaction &tx, block.vtx) {
+    //                 //remove transactions
+    //             }
+    //         }
+    //     }
+
