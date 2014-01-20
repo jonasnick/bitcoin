@@ -244,6 +244,7 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
     }
 
     while (pindex) {
+        LogPrintf("Writing block %i into External DB\n",pindex->nHeight);
         redisReply* dbGetBlockReply = transactionGraph.Command("GET blockAtHeight:%i",pindex->nHeight);
 
 
@@ -256,7 +257,49 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
             break;
         }
 
-        //remove old transactions if necessary
+        // remove old transactions if necessary
+        // i.e.its not just a new block on top of the chain
+        if (dbGetBlockReply->type!=REDIS_REPLY_NIL) {
+            CBlock bOld;
+            if (ReadBlockFromDisk(bOld, 
+                mapBlockIndex.find(uint256(dbGetBlockReply->str))->second)) {
+                BOOST_FOREACH(const CTransaction &tx, bOld.vtx) {
+                    // remove transaction
+                    transactionGraph.Command("DEL tx:%s",tx.GetHash().ToString().c_str());
+                    // remove transaction output pointer
+                    BOOST_FOREACH(const CTxIn &in, tx.vin) {
+                        uint256 inputTxHash = in.prevout.hash;
+                        redisReply *remTxOutputReply = 
+                        transactionGraph.Command(
+                                "SREM txOutput:%s %s",
+                                    inputTxHash.ToString().c_str(), 
+                                    tx.GetHash().ToString().c_str());
+
+                    }
+
+                    //remove address used in transaction
+                    BOOST_FOREACH(const CTxOut &out, tx.vout) {
+                        CTxDestination destinationAddress;
+                        ExtractDestination(out.scriptPubKey, 
+                                            destinationAddress);
+                        CBitcoinAddress address;
+                        if(address.Set(destinationAddress)) {
+                            // valid address
+                            redisReply *setAddressTxReply = 
+                            transactionGraph.Command(
+                                    "SREM address:%s %s",
+                                        address.ToString().c_str(), 
+                                        tx.GetHash().ToString().c_str());
+                        }
+                    }
+                }
+
+                
+            } else {
+                freeReplyObject(dbGetBlockReply);
+                return false;
+            }
+        }
 
 
         //add block to the database
@@ -271,6 +314,7 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
             //add transactions
             BOOST_FOREACH(const CTransaction &tx, bNew.vtx) {
 
+                //add transaction
                 json_spirit::Object result;
                 TxToJSON(tx, *(pindex->phashBlock), result);
                 string txString = 
@@ -288,11 +332,42 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
                 // ... 
                 // attention: these input transactions might not yet be stored
                 // in the database!
+                BOOST_FOREACH(const CTxIn &in, tx.vin) {
+                    uint256 inputTxHash = in.prevout.hash;
+                    redisReply *setTxOutputReply = 
+                    transactionGraph.Command(
+                            "SADD txOutput:%s %s",
+                                inputTxHash.ToString().c_str(), 
+                                tx.GetHash().ToString().c_str());
+
+                }
                 
                 // for every output address in the transaction add new db-entry
                 // txUse:outputAddress -> txid
+                BOOST_FOREACH(const CTxOut &out, tx.vout) {
+                    CTxDestination destinationAddress;
+                    ExtractDestination(out.scriptPubKey, 
+                                        destinationAddress);
+                    CBitcoinAddress address;
+                    if(address.Set(destinationAddress)) {
+                        // valid address
+                        redisReply *setAddressTxReply = 
+                        transactionGraph.Command(
+                                "SADD address:%s %s",
+                                    address.ToString().c_str(), 
+                                    tx.GetHash().ToString().c_str());
+                    }
+
+                // bool ExtractDestinations(const CScript& scriptPubKey, txnouttype& typeRet, vector<CTxDestination>& addressRet, int& nRequiredRet)
+                // maybe p2sh need additional considerations as well
+                // multisign transactions need additional considerations:
+                // who has redeemed the coins?
+                }
 
             }
+        } else {
+            freeReplyObject(dbGetBlockReply);
+            return false;
         }
 
         freeReplyObject(dbGetBlockReply);
