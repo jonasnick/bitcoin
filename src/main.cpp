@@ -12,7 +12,6 @@
 #include "checkqueue.h"
 #include "init.h"
 #include "net.h"
-#include "redisdb.h"
 #include "txdb.h"
 #include "txmempool.h"
 #include "ui_interface.h"
@@ -26,8 +25,7 @@
 #include <boost/filesystem/fstream.hpp>
 
 #include <hiredis.h>
-#include "rpcrawtransaction.cpp"
-#include "json/json_spirit_writer_template.h"
+#include "externaldb.h"
 
 using namespace std;
 using namespace boost;
@@ -265,35 +263,13 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
                 mapBlockIndex.find(uint256(dbGetBlockReply->str))->second)) {
                 BOOST_FOREACH(const CTransaction &tx, bOld.vtx) {
                     // remove transaction
-                    transactionGraph.Command("DEL tx:%s",tx.GetHash().ToString().c_str());
+                    // transactionGraph.deleteTransaction(tx); 
+                    transactionGraph.deleteTransactionInput(tx); 
                     // remove transaction output pointer
-                    BOOST_FOREACH(const CTxIn &in, tx.vin) {
-                        uint256 inputTxHash = in.prevout.hash;
-                        redisReply *remTxOutputReply = 
-                        transactionGraph.Command(
-                                "SREM txOutput:%s %s",
-                                    inputTxHash.ToString().c_str(), 
-                                    tx.GetHash().ToString().c_str());
-
-                    }
-
+                    transactionGraph.deleteTransactionOutputs(tx);
                     //remove address used in transaction
-                    BOOST_FOREACH(const CTxOut &out, tx.vout) {
-                        CTxDestination destinationAddress;
-                        ExtractDestination(out.scriptPubKey, 
-                                            destinationAddress);
-                        CBitcoinAddress address;
-                        if(address.Set(destinationAddress)) {
-                            // valid address
-                            redisReply *setAddressTxReply = 
-                            transactionGraph.Command(
-                                    "SREM address:%s %s",
-                                        address.ToString().c_str(), 
-                                        tx.GetHash().ToString().c_str());
-                        }
-                    }
+                    transactionGraph.deleteAddressTransactions(tx);
                 }
-
                 
             } else {
                 freeReplyObject(dbGetBlockReply);
@@ -301,69 +277,19 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
             }
         }
 
-
         //add block to the database
         CBlock bNew; 
         if (ReadBlockFromDisk(bNew, pindex)) {
 
             //set block at height
-            redisReply *setBlockReply = 
-                transactionGraph.Command("SET blockAtHeight:%i %s",pindex->nHeight,pindex->phashBlock->ToString().c_str());
-            freeReplyObject(setBlockReply);
+            transactionGraph.writeBlockAtHeight(pindex->nHeight, pindex->phashBlock);
 
             //add transactions
             BOOST_FOREACH(const CTransaction &tx, bNew.vtx) {
-
-                //add transaction
-                json_spirit::Object result;
-                TxToJSON(tx, *(pindex->phashBlock), result);
-                string txString = 
-                    json_spirit::write_string(Value(result),false);
-
-                redisReply *setTxReply = 
-                    transactionGraph.Command("SET tx:%s '%s'",tx.GetHash().ToString().c_str(), txString.c_str());
-                // printf("GET foo: %s\n", setTxReply->str);
-                freeReplyObject(setTxReply);
-
-                // for every transactions t_i that is input to the
-                // transaction, add member to set
-                // output:t_i -> txid for the txid of the
-                // new transaction
-                // ... 
-                // attention: these input transactions might not yet be stored
-                // in the database!
-                BOOST_FOREACH(const CTxIn &in, tx.vin) {
-                    uint256 inputTxHash = in.prevout.hash;
-                    redisReply *setTxOutputReply = 
-                    transactionGraph.Command(
-                            "SADD txOutput:%s %s",
-                                inputTxHash.ToString().c_str(), 
-                                tx.GetHash().ToString().c_str());
-
-                }
-                
-                // for every output address in the transaction add new db-entry
-                // txUse:outputAddress -> txid
-                BOOST_FOREACH(const CTxOut &out, tx.vout) {
-                    CTxDestination destinationAddress;
-                    ExtractDestination(out.scriptPubKey, 
-                                        destinationAddress);
-                    CBitcoinAddress address;
-                    if(address.Set(destinationAddress)) {
-                        // valid address
-                        redisReply *setAddressTxReply = 
-                        transactionGraph.Command(
-                                "SADD address:%s %s",
-                                    address.ToString().c_str(), 
-                                    tx.GetHash().ToString().c_str());
-                    }
-
-                // bool ExtractDestinations(const CScript& scriptPubKey, txnouttype& typeRet, vector<CTxDestination>& addressRet, int& nRequiredRet)
-                // maybe p2sh need additional considerations as well
-                // multisign transactions need additional considerations:
-                // who has redeemed the coins?
-                }
-
+                // transactionGraph.writeTransaction(tx, pindex->phashBlock);
+                transactionGraph.writeTransactionInput(tx);
+                transactionGraph.writeTransactionOutputs(tx);
+                transactionGraph.writeAddressTransactions(tx);
             }
         } else {
             freeReplyObject(dbGetBlockReply);
@@ -371,6 +297,7 @@ bool updateExternalTransactionDatabase(CBlockIndex *pindex) {
         }
 
         freeReplyObject(dbGetBlockReply);
+
         pindex = pindex->pprev;
     }
     return true;

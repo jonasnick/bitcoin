@@ -178,16 +178,25 @@ void customDB::SetTip(CBlockIndex *pindex) {
 }
 
 
-// db.get["blockAtHeight:"+pindex->nHeight] !=  pindex->phashBlock) {
-    //     if (db.get["blockAtHeight:"+pindex->nHeight] != NULL) {
     //         // if there is something to remove, 
-    //         // i.e.its not just a new block on top of the chain
-    //         CBlock bOld;
-    //         if (ReadBlockFromDisk(bOld, 
-    //             mapBlockIndex.find(db.get["blockAtHeight:"+pindex->nHeight]))) {
-    //             BOOST_FOREACH(const CTransaction &tx, block.vtx) {
-    //                 //remove transactions
-    //             }
-    //         }
     //     }
+    //
+    //
+// All necessary data 
+/* numBlocks*(blocknumber + blockHashSize) + numTransactions(transactionHashSize + transactionSize) + numTransactions(transactionHashSize + averageOutput*txHashSize) + numOutputs(AddressSize + (avNumAddressUsed*txHashSize))
+ */
+/*
+ * results: approx 3000 blocks => 2.2mio keys => 2.5gb memory
+ */
+
+//stripped down test
+/* 
+ * store blockheight
+ * store only txid => txid
+ * 2000 blocks => 616000 keys => 130mb memory
+ */
+
+//further improvements
+//use hashes to store tx, txoutput
+//or always use bitcoinds RPCs to get transactions
 
