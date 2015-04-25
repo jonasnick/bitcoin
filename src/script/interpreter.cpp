@@ -1135,3 +1135,61 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, unsigne
 
     return set_success(serror);
 }
+
+bool VerifyScriptWithStack(const CScript& scriptSig, const CScript& scriptPubKey, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror, unsigned char *lastStackElement, unsigned int *lastStackElementLen)
+{
+    set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
+
+    if ((flags & SCRIPT_VERIFY_SIGPUSHONLY) != 0 && !scriptSig.IsPushOnly()) {
+        return set_error(serror, SCRIPT_ERR_SIG_PUSHONLY);
+    }
+
+    vector<vector<unsigned char> > stack, stackCopy;
+    if (!EvalScript(stack, scriptSig, flags, checker, serror))
+        // serror is set
+        return false;
+    if (flags & SCRIPT_VERIFY_P2SH)
+        stackCopy = stack;
+    if (!EvalScript(stack, scriptPubKey, flags, checker, serror))
+        // serror is set
+        return false;
+    if (stack.empty())
+        return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+
+    if (CastToBool(stack.back()) == false)
+        return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+
+    // Additional validation for spend-to-script-hash transactions:
+    if ((flags & SCRIPT_VERIFY_P2SH) && scriptPubKey.IsPayToScriptHash())
+    {
+        // scriptSig must be literals-only or validation fails
+        if (!scriptSig.IsPushOnly())
+            return set_error(serror, SCRIPT_ERR_SIG_PUSHONLY);
+
+        // stackCopy cannot be empty here, because if it was the
+        // P2SH  HASH <> EQUAL  scriptPubKey would be evaluated with
+        // an empty stack and the EvalScript above would return false.
+        assert(!stackCopy.empty());
+
+        const valtype& pubKeySerialized = stackCopy.back();
+        CScript pubKey2(pubKeySerialized.begin(), pubKeySerialized.end());
+        popstack(stackCopy);
+
+        if (!EvalScript(stackCopy, pubKey2, flags, checker, serror))
+            // serror is set
+            return false;
+        if (stackCopy.empty())
+            return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+        if (!CastToBool(stackCopy.back()))
+            return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+        else
+            return set_success(serror);
+    }
+
+    if (stack.size() > 0) {
+        vector<unsigned char> last = stack.back();
+        std::copy(last.begin(), last.end(), lastStackElement);
+        *lastStackElementLen = last.size();
+    }
+    return set_success(serror);
+}
